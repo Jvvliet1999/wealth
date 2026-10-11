@@ -1,0 +1,17 @@
+{
+  "name": "Wealth Management",
+  "short_name": "Wealth",
+  "description": "Je persoonlijke financiën: geldstroom, vaste lasten, spaarpotten, leningen en beleggingen.",
+  "lang": "nl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#e7f1ec",
+  "theme_color": "#e7f1ec",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
