@@ -566,6 +566,10 @@ a.btn{color:var(--ink)}
   .lk-pad{grid-template-columns:repeat(3,68px);gap:12px}.lk-pad button{width:68px;height:68px}
 }
 @media (display-mode:standalone){body{overscroll-behavior-y:none}}
+
+.rs-opt{display:flex;flex-direction:column;gap:4px;text-align:left;border:1px solid #cfe3d9;background:#fbfefd;border-radius:14px;padding:12px 14px;cursor:pointer;font:inherit;color:var(--ink)}
+.rs-opt:hover{border-color:#3f9b80;background:#eef8f3}
+.rs-opt span{font-size:12.5px;color:var(--ink2)}
 </style>
 </head>
 <body>
@@ -580,7 +584,7 @@ a.btn{color:var(--ink)}
 </div>
 <nav class="mob-nav" id="mobnav"></nav>
 <input type="file" id="file" accept=".csv,text/csv" multiple hidden>
-<input type="file" id="restore" accept=".json,application/json" hidden>
+<input type="file" id="restore" hidden>
 
 <script>
 /*
@@ -1813,9 +1817,10 @@ function viewImp(){
       <p class="muted" style="margin-top:0">Overboekingen van je betaalrekening naar een eigen spaarrekening tellen als <b>Sparen</b>. De tegenboeking op de spaarrekening telt niet nog een keer mee.</p>
       ${ibans.length?`<table><tbody>${ibans.map(i=>`<tr><td><span class="chip">${esc(i)}</span></td><td class="muted" style="font-size:12.5px">${S.tx.filter(t=>t.iban===i).length||"handmatig"}${S.tx.some(t=>t.iban===i)?" trx":""}</td><td style="width:170px"><select class="inline-in" data-acc="${esc(i)}"><option value="betaal" ${accRole(i)==="betaal"?"selected":""}>Betaalrekening</option><option value="spaar" ${accRole(i)==="spaar"?"selected":""}>Spaarrekening</option></select></td></tr>`).join("")}</tbody></table>`:""}
       <div style="display:flex;gap:8px;margin:8px 0 14px;flex-wrap:wrap"><input class="inline-in" style="flex:1;min-width:200px" id="newacc" placeholder="IBAN van je spaarrekening toevoegen"><button class="btn" id="addacc">Toevoegen</button></div>
-      <p class="muted">Alles staat alleen in deze browser op deze computer. Maak af en toe een back-up, want browsergegevens wissen gooit het ook weg.</p>
+      <p class="muted">Je gegevens staan versleuteld op dit apparaat. Maak een <b>versleutelde back-up</b> om ze veilig te bewaren of naar je telefoon over te zetten.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="bk">Back-up downloaden</button>
+        <button class="btn primary" id="bke">Versleutelde back-up downloaden</button>
+        <button class="btn" id="bk" title="Leesbaar voor iedereen die het bestand heeft">Onversleutelde back-up</button>
         <button class="btn" id="rs">Back-up terugzetten</button>
         <button class="btn" id="demo">Voorbeelddata laden</button>
         <button class="btn danger" id="wipe">Alles wissen</button>
@@ -1832,13 +1837,69 @@ function viewImp(){
   $("#addacc").onclick=()=>{const v=normIban($("#newacc").value);if(v.length<10){toast("Vul een geldig IBAN in");return;}S.acc[v]="spaar";rebuildOwn();save();render();toast("Spaarrekening toegevoegd");};
   $("#chpin").onclick=changePin;
   $("#recset").onclick=async()=>{if(readRec()&&!confirm("Een nieuwe herstelcode maken? De oude code werkt daarna niet meer."))return;const c=prompt("Ter controle: je huidige pincode:");if(c==null)return;try{await unwrapDK(c,WRAP.wp);}catch(e){alert("Onjuiste pincode.");return;}CURPIN=c;setupRecovery();};
-  $("#bk").onclick=backup;$("#rs").onclick=()=>$("#restore").click();
+  $("#bke").onclick=backupEnc;$("#bk").onclick=()=>{if(confirm("Een onversleutelde back-up is leesbaar voor iedereen die het bestand in handen krijgt. Toch downloaden?"))backup();};$("#rs").onclick=()=>$("#restore").click();
   $("#demo").onclick=()=>{if(S.tx.length&&!confirm("Voorbeelddata toevoegen aan je bestaande gegevens? Kies liever eerst Alles wissen."))return;loadDemo();};
   $("#wipe").onclick=()=>{if(!confirm("Alle transacties, regels en categorieën wissen?"))return;S=fresh();rebuildOwn();save();render();};
 }
-function backup(){
-  const b=new Blob([JSON.stringify(S)],{type:"application/json"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`wealth-management-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();
+/* ---------- Back-ups (versleuteld) en overzetten ---------- */
+function pmShow(html){let el=document.getElementById("pm");if(!el){el=document.createElement("div");el.id="pm";document.body.appendChild(el);}el.hidden=false;el.innerHTML=`<div class="dr-back"></div><div class="pm-panel">${html}</div>`;return el;}
+function pmClose(){const el=document.getElementById("pm");if(el){el.hidden=true;el.innerHTML="";}}
+function download(name,text){const b=new Blob([text],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
+function backup(){download(`wealth-backup-${todayStr()}-ONVERSLEUTELD.json`,JSON.stringify(S));}
+async function encryptWithPassword(pw,text){const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},await pbkdf(pw,salt),enc.encode(text));
+  return JSON.stringify({format:"wealth-backup",v:1,created:new Date().toISOString(),salt:b64(salt),iv:b64(iv),ct:b64(ct)});}
+async function decryptWithPassword(pw,d){const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(d.iv)},await pbkdf(pw,unb64(d.salt)),unb64(d.ct));return JSON.parse(dec.decode(pt));}
+function backupEnc(){
+  const el=pmShow(`<div class="dr-head"><div class="dr-ic" style="background:#dcefe6"><span style="background:#2f8a6c"></span></div><h2 class="dr-title" style="flex:1">Versleutelde back-up</h2><button class="cz-x" id="pmx">✕</button></div>
+    <div class="pm-body">
+      <p style="margin:0">Kies een wachtwoord voor dit bestand. Zonder dit wachtwoord is de back-up onleesbaar, dus je kunt hem veilig via Google Drive of je eigen mail naar je telefoon sturen.</p>
+      <label>Wachtwoord <span class="muted">(minimaal 10 tekens)</span><input class="inline-in" id="bp1" type="password" autocomplete="new-password"></label>
+      <label>Herhaal wachtwoord<input class="inline-in" id="bp2" type="password" autocomplete="new-password"></label>
+      <p class="muted" style="margin:0;font-size:12.5px">Tip: gebruik elke maand hetzelfde wachtwoord, bijvoorbeeld een zinnetje als <i>groene-appel-fiets-42</i>. Gebruik niet je pincode.</p>
+      <p class="lk-msg" id="bpmsg" style="margin:0"></p>
+    </div>
+    <div class="pm-foot"><button class="btn" id="bpcan" style="margin-left:auto">Annuleren</button><button class="btn primary" id="bpgo">Downloaden</button></div>`);
+  $("#pmx").onclick=pmClose;$("#bpcan").onclick=pmClose;el.querySelector(".dr-back").onclick=pmClose;
+  $("#bpgo").onclick=async()=>{const a=$("#bp1").value,b=$("#bp2").value,m=$("#bpmsg");
+    if(a.length<10){m.textContent="Kies minimaal 10 tekens.";return;}if(a!==b){m.textContent="De wachtwoorden komen niet overeen.";return;}
+    m.textContent="Versleutelen…";
+    download(`wealth-backup-${todayStr()}.json`,await encryptWithPassword(a,JSON.stringify(S)));
+    pmClose();toast("Versleutelde back-up gedownload");};
+  setTimeout(()=>$("#bp1").focus(),30);
+}
+function mergeData(d){
+  const ids=new Set(S.tx.map(t=>t.id));let nt=0,n2=0,ns=0;
+  for(const t of d.tx||[])if(!ids.has(t.id)){S.tx.push(t);ids.add(t.id);nt++;}
+  const tid=new Set(S.t212.map(t=>t.id));for(const t of d.t212||[])if(!tid.has(t.id)){S.t212.push(t);tid.add(t.id);n2++;}
+  for(const sn of d.snaps||[]){const i=S.snaps.findIndex(x=>x.date===sn.date);if(i<0){S.snaps.push(sn);ns++;}else if(S.snaps[i].value!==sn.value){S.snaps[i]=sn;ns++;}}
+  S.acc=Object.assign({},d.acc||{},S.acc||{});
+  S.tx.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);S.t212.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);S.snaps.sort((a,b)=>a.date<b.date?-1:1);
+  return {nt,n2,ns};
+}
+function chooseRestore(d){
+  const el=pmShow(`<div class="dr-head"><div class="dr-ic" style="background:#dcefe6"><span style="background:#2f8a6c"></span></div><h2 class="dr-title" style="flex:1">Back-up terugzetten</h2><button class="cz-x" id="pmx">✕</button></div>
+    <div class="pm-body">
+      <p style="margin:0">De back-up bevat <b>${(d.tx||[]).length}</b> banktransacties en <b>${(d.t212||[]).length}</b> Trading 212-regels.</p>
+      <button class="rs-opt" id="rsmerge"><b>Alleen nieuwe transacties toevoegen</b><span>Voor je maandelijkse update. Nieuwe bank- en Trading 212-regels en de Trading 212-waarde komen erbij; je eigen instellingen, spaarpotten, leningen en indelingen op dit apparaat blijven staan.</span></button>
+      <button class="rs-opt" id="rsall"><b>Alles vervangen</b><span>Voor de eerste keer overzetten. Alles op dit apparaat wordt vervangen door de back-up.</span></button>
+    </div>`);
+  $("#pmx").onclick=pmClose;el.querySelector(".dr-back").onclick=pmClose;
+  $("#rsmerge").onclick=()=>{const r=mergeData(d);rebuildOwn();save();pmClose();render();toast(`${r.nt} nieuwe banktransacties, ${r.n2} Trading 212-regels en ${r.ns} waarde-updates toegevoegd`);};
+  $("#rsall").onclick=()=>{if(!confirm("Alles op dit apparaat vervangen door de back-up?"))return;S=Object.assign(fresh(),d);S.ui=Object.assign(fresh().ui,d.ui||{});migrate();rebuildOwn();save();pmClose();render();toast("Back-up teruggezet");};
+}
+async function handleRestore(f){
+  let d;try{d=JSON.parse(await f.text());}catch(_){alert("Dit is geen geldige back-up.");return;}
+  if(d&&d.format==="wealth-backup"){
+    const el=pmShow(`<div class="dr-head"><div class="dr-ic" style="background:#dcefe6"><span style="background:#2f8a6c"></span></div><h2 class="dr-title" style="flex:1">Wachtwoord van de back-up</h2><button class="cz-x" id="pmx">✕</button></div>
+      <div class="pm-body"><label>Wachtwoord<input class="inline-in" id="rpw" type="password" autocomplete="current-password"></label><p class="lk-msg" id="rpmsg" style="margin:0"></p></div>
+      <div class="pm-foot"><button class="btn" id="rpcan" style="margin-left:auto">Annuleren</button><button class="btn primary" id="rpgo">Openen</button></div>`);
+    $("#pmx").onclick=pmClose;$("#rpcan").onclick=pmClose;el.querySelector(".dr-back").onclick=pmClose;
+    const go=async()=>{$("#rpmsg").textContent="Ontsleutelen…";try{const data=await decryptWithPassword($("#rpw").value,d);if(!Array.isArray(data.tx))throw 0;chooseRestore(data);}catch(_){$("#rpmsg").textContent="Onjuist wachtwoord.";}};
+    $("#rpgo").onclick=go;$("#rpw").onkeydown=e=>{if(e.key==="Enter")go();};setTimeout(()=>$("#rpw").focus(),30);return;
+  }
+  if(!d||!Array.isArray(d.tx)){alert("Dit is geen geldige back-up.");return;}
+  chooseRestore(d);
 }
 function emptyState(){
   $("#main").innerHTML=`<div class="card empty"><h2>Nog geen transacties</h2><p>Importeer een CSV van de Rabobank om te zien waar je geld vandaan komt en naartoe gaat.</p>
@@ -2482,7 +2543,7 @@ function render(){
   ({flow:viewFlow,tx:viewTx,exp:viewExp,fixed:viewFixed,nw:viewNw,loans:viewLoans,cats:viewCats,imp:viewImp}[S.ui.view]||viewFlow)();
 }
 $("#file").onchange=e=>{handleFiles([...e.target.files]);e.target.value="";};
-$("#restore").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;try{const d=JSON.parse(await f.text());if(!Array.isArray(d.tx))throw 0;S=Object.assign(fresh(),d);S.ui=Object.assign(fresh().ui,d.ui||{});migrate();rebuildOwn();save();render();toast("Back-up teruggezet");}catch(_){alert("Dit is geen geldige back-up.");}};
+$("#restore").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(f)handleRestore(f);};
 let rz;window.addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(S.ui.view==="flow")render();},200);});
 /* ---------- Widgets op elk tabblad ---------- */
 const FLAT=["kpis","grid2","exp-grid","ln-list","news-grid"];
