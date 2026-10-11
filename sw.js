@@ -1,7 +1,7 @@
 // Wealth Management – service worker: zorgt dat de app ook offline opent.
 // Verhoog VERSION bij elke nieuwe versie van index.html.
 // Ruimt alleen eigen caches op ("wealth-…"), zodat andere apps op hetzelfde adres (zoals POP) niets kwijtraken.
-const VERSION = "wealth-v4";
+const VERSION = "wealth-v5";
 const SHELL = ["./", "index.html", "manifest.json", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
